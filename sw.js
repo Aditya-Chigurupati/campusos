@@ -1,8 +1,8 @@
 
-/* CampusOS service worker: offline app shell only.
-   User data remains in localStorage. */
+/* CampusOS service worker — offline app shell.
+   User data stays in browser storage. */
 
-const CACHE_NAME = "campusos-shell-v1";
+const CACHE_NAME = "campusos-shell-v2";
 
 const APP_SHELL = [
   "./",
@@ -10,6 +10,8 @@ const APP_SHELL = [
   "./style.css",
   "./script.js",
   "./manifest.json",
+  "./sw.js",
+  "./cloud-sync.js",
   "./icons/campusos.svg"
 ];
 
@@ -42,62 +44,54 @@ self.addEventListener("fetch", event => {
   const request = event.request;
   const url = new URL(request.url);
 
-  if (
-    request.method !== "GET" ||
-    url.origin !== self.location.origin
-  ) {
+  if (request.method !== "GET" || url.origin !== self.location.origin) {
     return;
   }
 
-  // Try the network first for page navigation.
-  // Use the cached page if offline.
   if (request.mode === "navigate") {
     event.respondWith((async () => {
       try {
         const response = await fetch(request);
-
         if (response && response.ok) {
           const cache = await caches.open(CACHE_NAME);
-          cache.put("./index.html", response.clone());
+          await cache.put("./index.html", response.clone());
         }
-
         return response;
       } catch {
         return (
           await caches.match(request) ||
-          await caches.match("./index.html")
+          await caches.match("./index.html") ||
+          Response.error()
         );
       }
     })());
-
     return;
   }
 
-  // App assets: cached copy first, network fallback.
   const appFiles = [
     "style.css",
     "script.js",
     "manifest.json",
+    "sw.js",
+    "cloud-sync.js",
     "icons/campusos.svg"
   ];
 
   if (appFiles.some(path => url.pathname.endsWith(path))) {
     event.respondWith((async () => {
       const cached = await caches.match(request);
+      if (cached) return cached;
 
-      const network = fetch(request)
-        .then(response => {
-          if (response && response.ok) {
-            caches.open(CACHE_NAME).then(cache =>
-              cache.put(request, response.clone())
-            );
-          }
-
-          return response;
-        })
-        .catch(() => null);
-
-      return cached || await network || Response.error();
+      try {
+        const response = await fetch(request);
+        if (response && response.ok) {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(request, response.clone());
+        }
+        return response;
+      } catch {
+        return Response.error();
+      }
     })());
   }
 });
